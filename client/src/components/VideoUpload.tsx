@@ -9,26 +9,25 @@ type Phase = 'idle' | 'extracting' | 'analyzing' | 'saving' | 'done' | 'error'
 // Extract frames from a video file using the Canvas API
 async function extractFrames(file: File, maxFrames = 6): Promise<string[]> {
   return new Promise((resolve, reject) => {
-    const video = document.createElement('video')
+    const video  = document.createElement('video')
     const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')
+    const ctx    = canvas.getContext('2d')
 
     if (!ctx) { reject(new Error('Canvas not supported')); return }
 
     video.playsInline = true
-    video.muted = true
-    video.preload = 'metadata'
-    video.src = URL.createObjectURL(file)
+    video.muted       = true
+    video.preload     = 'metadata'
+    video.src         = URL.createObjectURL(file)
 
     video.onloadedmetadata = () => {
-      // Resize to max 768px keeping aspect ratio
-      const MAX = 768
+      const MAX   = 768
       const scale = Math.min(MAX / video.videoWidth, MAX / video.videoHeight, 1)
       canvas.width  = Math.round(video.videoWidth  * scale)
       canvas.height = Math.round(video.videoHeight * scale)
 
-      const duration = video.duration
-      const interval = Math.max(duration / maxFrames, 0.5)
+      const duration  = video.duration
+      const interval  = Math.max(duration / maxFrames, 0.5)
       const timestamps: number[] = []
       for (let t = 0.5; t < duration && timestamps.length < maxFrames; t += interval) {
         timestamps.push(t)
@@ -65,16 +64,22 @@ async function extractFrames(file: File, maxFrames = 6): Promise<string[]> {
 const PHASE_LABELS: Record<Phase, string> = {
   idle:       '',
   extracting: 'Reading your video...',
-  analyzing:  'Identifying clothing items...',
+  analyzing:  'Intake Agent identifying items...',
   saving:     'Saving to your wardrobe...',
   done:       'Wardrobe updated!',
   error:      'Something went wrong',
 }
 
+function Spinner() {
+  return (
+    <div className="w-12 h-12 rounded-full border-4 border-indigo-500/30 border-t-indigo-400 animate-spin" />
+  )
+}
+
 export default function VideoUpload({ onAnalysisComplete }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
-  const [phase, setPhase] = useState<Phase>('idle')
-  const [count, setCount] = useState(0)
+  const [phase, setPhase]       = useState<Phase>('idle')
+  const [count, setCount]       = useState(0)
   const [errorMsg, setErrorMsg] = useState('')
   const [dragging, setDragging] = useState(false)
 
@@ -91,9 +96,9 @@ export default function VideoUpload({ onAnalysisComplete }: Props) {
 
       setPhase('analyzing')
       const res = await fetch('/api/analyze/closet', {
-        method: 'POST',
+        method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ frames }),
+        body:    JSON.stringify({ frames }),
       })
 
       if (!res.ok) {
@@ -114,48 +119,40 @@ export default function VideoUpload({ onAnalysisComplete }: Props) {
     }
   }
 
-  const handleFile = (file: File | null | undefined) => {
-    if (file) processFile(file)
-  }
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
-    handleFile(e.dataTransfer.files[0])
-  }
-
+  const handleFile  = (file: File | null | undefined) => { if (file) processFile(file) }
+  const handleDrop  = (e: React.DragEvent) => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]) }
   const isProcessing = ['extracting', 'analyzing', 'saving'].includes(phase)
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[400px]">
+    <div className="flex flex-col items-center justify-center min-h-[340px]">
       <div
         onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
         onDragLeave={() => setDragging(false)}
         onDrop={handleDrop}
         onClick={() => !isProcessing && inputRef.current?.click()}
         className={`
-          w-full max-w-xl border-2 border-dashed rounded-3xl p-12 text-center transition-all cursor-pointer
-          ${isProcessing ? 'cursor-default border-indigo-400 bg-indigo-50' : ''}
-          ${dragging ? 'border-indigo-500 bg-indigo-50 scale-[1.02]' : ''}
-          ${phase === 'idle' ? 'border-slate-300 hover:border-indigo-400 hover:bg-slate-50' : ''}
-          ${phase === 'done'  ? 'border-emerald-400 bg-emerald-50' : ''}
-          ${phase === 'error' ? 'border-red-300 bg-red-50' : ''}
+          w-full border border-dashed rounded-2xl p-10 text-center transition-all duration-200
+          ${isProcessing   ? 'cursor-default border-indigo-500/40 bg-indigo-500/5' : 'cursor-pointer'}
+          ${dragging       ? 'border-indigo-400/60 bg-indigo-500/10 scale-[1.01]'  : ''}
+          ${phase === 'idle'  ? 'border-white/10 hover:border-indigo-500/40 hover:bg-indigo-500/5' : ''}
+          ${phase === 'done'  ? 'border-emerald-500/40 bg-emerald-500/5'  : ''}
+          ${phase === 'error' ? 'border-red-500/30 bg-red-500/5'          : ''}
         `}
       >
         {/* Idle */}
         {phase === 'idle' && (
           <>
-            <div className="text-6xl mb-4">🎥</div>
-            <h3 className="text-lg font-semibold text-slate-700 mb-1">
+            <div className="text-5xl mb-4">🎥</div>
+            <h3 className="text-base font-semibold text-slate-200 mb-1">
               Upload a video of your closet
             </h3>
-            <p className="text-sm text-slate-400 mb-4">
-              Walk through your wardrobe — Claude will identify every item automatically
+            <p className="text-sm text-slate-500 mb-5">
+              The Intake Agent will tag every item — color, material, formality, season
             </p>
-            <span className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
+            <span className="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold px-5 py-2.5 rounded-xl transition-colors">
               Choose Video
             </span>
-            <p className="text-xs text-slate-400 mt-3">or drag & drop a video file here</p>
+            <p className="text-xs text-slate-600 mt-3">or drag & drop a video file here</p>
           </>
         )}
 
@@ -163,15 +160,15 @@ export default function VideoUpload({ onAnalysisComplete }: Props) {
         {isProcessing && (
           <>
             <div className="flex items-center justify-center mb-4">
-              <div className="w-12 h-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
+              <Spinner />
             </div>
-            <h3 className="text-lg font-semibold text-indigo-700 mb-1">
+            <h3 className="text-base font-semibold text-indigo-300 mb-1">
               {PHASE_LABELS[phase]}
             </h3>
             <p className="text-sm text-slate-500">
               {phase === 'extracting' && 'Pulling frames from your video...'}
-              {phase === 'analyzing' && 'Claude is scanning your wardrobe...'}
-              {phase === 'saving' && 'Adding items to your closet...'}
+              {phase === 'analyzing'  && 'Claude Vision is scanning your wardrobe...'}
+              {phase === 'saving'     && 'Writing enriched items to your closet...'}
             </p>
           </>
         )}
@@ -179,8 +176,8 @@ export default function VideoUpload({ onAnalysisComplete }: Props) {
         {/* Done */}
         {phase === 'done' && (
           <>
-            <div className="text-6xl mb-4">✅</div>
-            <h3 className="text-lg font-semibold text-emerald-700 mb-1">
+            <div className="text-5xl mb-4">✅</div>
+            <h3 className="text-base font-semibold text-emerald-400 mb-1">
               {count} item{count !== 1 ? 's' : ''} found!
             </h3>
             <p className="text-sm text-slate-500">Loading your dashboard...</p>
@@ -190,11 +187,11 @@ export default function VideoUpload({ onAnalysisComplete }: Props) {
         {/* Error */}
         {phase === 'error' && (
           <>
-            <div className="text-5xl mb-4">⚠️</div>
-            <h3 className="text-base font-semibold text-red-600 mb-2">{errorMsg}</h3>
+            <div className="text-4xl mb-4">⚠️</div>
+            <h3 className="text-sm font-semibold text-red-400 mb-3">{errorMsg}</h3>
             <button
               onClick={(e) => { e.stopPropagation(); setPhase('idle'); setErrorMsg('') }}
-              className="text-sm text-indigo-600 underline"
+              className="text-sm text-indigo-400 hover:text-indigo-300 underline"
             >
               Try again
             </button>

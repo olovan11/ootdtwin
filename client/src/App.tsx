@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import StyleQuiz, { type QuizAnswers } from './components/StyleQuiz'
 import VideoUpload from './components/VideoUpload'
 
@@ -15,19 +15,53 @@ type ClosetItem = {
   category: string
   brand: string | null
   color: string | null
+  fabric: string | null
+  formality: number | null
+  season: string | null
 }
 
+// ── Agent pipeline steps ────────────────────────────────────────
+const AGENT_STEPS = [
+  { emoji: '🔍', label: 'Intake Agent',   detail: 'Analyzing wardrobe...'          },
+  { emoji: '🌤️', label: 'Context Agent',  detail: 'Fetching Lexington weather...'  },
+  { emoji: '🧠', label: 'Style Agent',    detail: 'Applying Style DNA...'           },
+  { emoji: '✨', label: 'Outfit Agent',   detail: 'Finalizing look...'              },
+]
+const STEP_DELAYS = [0, 1400, 2900, 4400]
+
+// ── Category colors ─────────────────────────────────────────────
 const CATEGORY_COLORS: Record<string, string> = {
-  Top:       'bg-blue-100 text-blue-700',
-  Bottom:    'bg-violet-100 text-violet-700',
-  Shoes:     'bg-amber-100 text-amber-700',
-  Outerwear: 'bg-emerald-100 text-emerald-700',
-  Accessory: 'bg-pink-100 text-pink-700',
+  Top:       'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
+  Bottom:    'bg-violet-500/20 text-violet-300 border border-violet-500/30',
+  Shoes:     'bg-amber-500/20  text-amber-300  border border-amber-500/30',
+  Outerwear: 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30',
+  Accessory: 'bg-pink-500/20  text-pink-300   border border-pink-500/30',
 }
 
-function Spinner() {
+// ── Formality badge ──────────────────────────────────────────────
+function FormalityDot({ score }: { score: number | null }) {
+  if (!score) return null
+  const color = score >= 7 ? 'bg-indigo-400' : score >= 4 ? 'bg-amber-400' : 'bg-emerald-400'
   return (
-    <div className="w-4 h-4 rounded-full border-2 border-current border-r-transparent animate-spin inline-block" />
+    <span className="flex items-center gap-1 text-xs text-slate-500 ml-auto shrink-0">
+      <span className={`w-1.5 h-1.5 rounded-full ${color}`} />
+      {score}/10
+    </span>
+  )
+}
+
+function Spinner({ className = 'w-4 h-4' }: { className?: string }) {
+  return (
+    <div className={`rounded-full border-2 border-current border-r-transparent animate-spin inline-block ${className}`} />
+  )
+}
+
+// ── Glass card ───────────────────────────────────────────────────
+function GlassCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div className={`bg-slate-800/40 backdrop-blur-xl border border-white/[0.08] rounded-2xl shadow-2xl ${className}`}>
+      {children}
+    </div>
   )
 }
 
@@ -38,16 +72,19 @@ export default function App() {
     catch { return null }
   })
 
-  const [items, setItems] = useState<ClosetItem[]>([])
-  const [weather, setWeather] = useState<Weather | null>(null)
+  const [items, setItems]       = useState<ClosetItem[]>([])
+  const [weather, setWeather]   = useState<Weather | null>(null)
   const [weatherStatus, setWeatherStatus] = useState<'loading' | 'ok' | 'error'>('loading')
 
-  const [styling, setStyling] = useState(false)
-  const [stylingPhase, setStylingPhase] = useState('')
+  const [styling, setStyling]           = useState(false)
+  const [activeStep, setActiveStep]     = useState(-1)
   const [recommendation, setRecommendation] = useState<string | null>(null)
   const [recommendError, setRecommendError] = useState<string | null>(null)
+  const [feedback, setFeedback]         = useState<'up' | 'down' | null>(null)
 
   const [showUpload, setShowUpload] = useState(false)
+
+  const stepTimers = useRef<ReturnType<typeof setTimeout>[]>([])
 
   const fetchItems = async () => {
     const data = await fetch('/api/closet').then((r) => r.json())
@@ -80,11 +117,16 @@ export default function App() {
 
   const handleGenerate = async () => {
     setStyling(true)
-    setStylingPhase('Scanning your wardrobe...')
+    setActiveStep(0)
     setRecommendation(null)
     setRecommendError(null)
+    setFeedback(null)
 
-    const phaseTimer = setTimeout(() => setStylingPhase('Consulting your stylist...'), 1500)
+    // Simulate per-agent status advances
+    stepTimers.current.forEach(clearTimeout)
+    stepTimers.current = STEP_DELAYS.slice(1).map((delay, i) =>
+      setTimeout(() => setActiveStep(i + 1), delay)
+    )
 
     try {
       const res = await fetch('/api/recommend', {
@@ -98,10 +140,21 @@ export default function App() {
     } catch {
       setRecommendError('Could not reach the AI service.')
     } finally {
-      clearTimeout(phaseTimer)
+      stepTimers.current.forEach(clearTimeout)
+      stepTimers.current = []
       setStyling(false)
-      setStylingPhase('')
+      setActiveStep(-1)
     }
+  }
+
+  const handleFeedback = async (rating: 1 | 5) => {
+    if (!recommendation || feedback) return
+    setFeedback(rating === 5 ? 'up' : 'down')
+    await fetch('/api/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ outfit: recommendation, rating }),
+    }).catch(() => { /* best-effort */ })
   }
 
   const handleResetQuiz = () => {
@@ -117,40 +170,38 @@ export default function App() {
     return <StyleQuiz onComplete={handleQuizComplete} />
   }
 
-  // ── Derived state ────────────────────────────────────────────────
-  const hasItems = items.length > 0
-  // Button is locked if no items or currently generating
+  const hasItems        = items.length > 0
   const generateDisabled = !hasItems || styling
 
   // ── Dashboard ────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
 
       {/* ── Header ── */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-10">
+      <header className="bg-slate-900/80 backdrop-blur-xl border-b border-white/[0.06] sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-2xl">👗</span>
             <div>
-              <h1 className="text-base font-bold leading-none text-slate-900">OOTD Twin</h1>
-              <p className="text-xs text-slate-400 mt-0.5">AI Personal Stylist · Lexington, VA</p>
+              <h1 className="text-base font-bold leading-none text-white">OOTD Twin</h1>
+              <p className="text-xs text-slate-500 mt-0.5">AI Personal Stylist · Lexington, VA</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
             {profile && (
-              <span className="text-xs bg-indigo-50 text-indigo-600 border border-indigo-100 px-2.5 py-1 rounded-full">
+              <span className="text-xs bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 px-2.5 py-1 rounded-full">
                 {profile.aesthetic}
               </span>
             )}
             <button
               onClick={() => setShowUpload(true)}
-              className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-3 py-1.5 rounded-lg transition-colors"
+              className="text-xs bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 px-3 py-1.5 rounded-lg transition-colors"
             >
               🎥 Scan Closet
             </button>
             <button
               onClick={handleResetQuiz}
-              className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+              className="text-xs text-slate-500 hover:text-slate-300 transition-colors"
             >
               Retake Quiz
             </button>
@@ -162,48 +213,47 @@ export default function App() {
 
         {/* ── Video Upload Modal ── */}
         {showUpload && (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-6">
-            <div className="bg-white rounded-3xl p-8 w-full max-w-xl shadow-2xl">
+          <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+            <GlassCard className="p-8 w-full max-w-xl">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-lg font-bold text-slate-800">Scan Your Closet</h2>
+                <h2 className="text-lg font-bold text-white">Scan Your Closet</h2>
                 <button
                   onClick={() => setShowUpload(false)}
-                  className="text-slate-400 hover:text-slate-600 text-2xl leading-none"
+                  className="text-slate-500 hover:text-slate-300 text-2xl leading-none transition-colors"
                 >
                   ×
                 </button>
               </div>
               <VideoUpload onAnalysisComplete={handleAnalysisComplete} />
-            </div>
+            </GlassCard>
           </div>
         )}
 
-        {/* ── Two-column dashboard (always visible after quiz) ── */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
 
           {/* ════ LEFT COLUMN ════ */}
           <div className="flex flex-col gap-5">
 
-            {/* Wardrobe card */}
-            <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            {/* ── Wardrobe card ── */}
+            <GlassCard className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
+                  <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
                     Your Wardrobe
                   </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    {hasItems ? 'Detected from your closet video' : 'No items yet'}
+                  <p className="text-xs text-slate-600 mt-0.5">
+                    {hasItems ? 'Scanned by Intake Agent' : 'No items yet'}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
                   {hasItems && (
-                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                    <span className="text-xs text-slate-500 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">
                       {items.length} items
                     </span>
                   )}
                   <button
                     onClick={() => setShowUpload(true)}
-                    className="text-xs text-indigo-600 hover:text-indigo-700 border border-indigo-200 px-2 py-0.5 rounded-full transition-colors"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 border border-indigo-500/30 px-2 py-0.5 rounded-full transition-colors"
                   >
                     + Scan
                   </button>
@@ -214,86 +264,94 @@ export default function App() {
               {!hasItems && (
                 <button
                   onClick={() => setShowUpload(true)}
-                  className="w-full border-2 border-dashed border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 rounded-xl py-10 flex flex-col items-center gap-3 transition-all group"
+                  className="w-full border border-dashed border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/5 rounded-xl py-10 flex flex-col items-center gap-3 transition-all group"
                 >
                   <span className="text-4xl">🎥</span>
-                  <p className="text-sm font-medium text-slate-500 group-hover:text-indigo-600 transition-colors">
+                  <p className="text-sm font-medium text-slate-400 group-hover:text-indigo-300 transition-colors">
                     Film a walk-through of your closet
                   </p>
-                  <p className="text-xs text-slate-400">
-                    Claude will identify every item automatically
+                  <p className="text-xs text-slate-600">
+                    Intake Agent will tag every item automatically
                   </p>
                 </button>
               )}
 
               {/* Wardrobe list */}
               {hasItems && (
-                <ul className="space-y-1.5 max-h-[380px] overflow-y-auto -mr-1 pr-1">
+                <ul className="space-y-1 max-h-[380px] overflow-y-auto -mr-1 pr-1">
                   {items.map((item) => (
                     <li
                       key={item.id}
-                      className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-slate-50 transition-colors"
+                      className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-white/5 transition-colors"
                     >
                       <span
                         className={`shrink-0 text-xs font-medium px-2 py-0.5 rounded-full ${
-                          CATEGORY_COLORS[item.category] ?? 'bg-slate-100 text-slate-600'
+                          CATEGORY_COLORS[item.category] ?? 'bg-white/10 text-slate-400'
                         }`}
                       >
                         {item.category}
                       </span>
-                      <span className="text-sm text-slate-700 truncate">
-                        {item.brand ?? <span className="italic text-slate-400">Unnamed</span>}
+                      <span className="text-sm text-slate-300 truncate">
+                        {item.brand ?? <span className="italic text-slate-600">Unnamed</span>}
                       </span>
-                      {item.color && (
-                        <span className="ml-auto text-xs text-slate-400 shrink-0 capitalize">
-                          {item.color}
+                      {item.fabric && (
+                        <span className="text-xs text-slate-600 hidden sm:inline shrink-0">
+                          {item.fabric}
                         </span>
                       )}
+                      <FormalityDot score={item.formality} />
                     </li>
                   ))}
                 </ul>
               )}
-            </section>
+            </GlassCard>
 
-            {/* Style DNA card — only shown once quiz is done */}
+            {/* ── Style DNA card ── */}
             {profile && (
-              <section className="bg-gradient-to-br from-slate-800 to-slate-900 rounded-2xl p-5 text-white">
-                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-3">
-                  Your Style DNA
+              <GlassCard className="p-5 bg-gradient-to-br from-indigo-900/40 to-purple-900/30">
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-1">
+                  Style DNA
                 </h2>
+                <p className="text-xs text-slate-600 mb-4">Your aesthetic profile · managed by Style Agent</p>
                 <div className="grid grid-cols-2 gap-2 text-sm">
                   {[
-                    { label: 'Aesthetic',  value: profile.aesthetic },
-                    { label: 'Palette',    value: profile.palette   },
-                    { label: 'Occasion',   value: profile.occasion  },
-                    { label: 'Icon vibe',  value: profile.icon      },
+                    { label: 'Aesthetic',   value: profile.aesthetic },
+                    { label: 'Palette',     value: profile.palette   },
+                    { label: 'Occasion',    value: profile.occasion  },
+                    { label: 'Icon vibe',   value: profile.icon      },
                   ].map(({ label, value }) => (
-                    <div key={label} className="bg-white/10 rounded-lg p-2.5">
-                      <p className="text-slate-400 text-xs">{label}</p>
-                      <p className="font-semibold leading-snug mt-0.5">{value}</p>
+                    <div key={label} className="bg-white/5 border border-white/[0.06] rounded-xl p-3">
+                      <p className="text-slate-500 text-xs mb-0.5">{label}</p>
+                      <p className="font-semibold text-slate-200 leading-snug">{value}</p>
                     </div>
                   ))}
                 </div>
-              </section>
+                <div className="mt-3 pt-3 border-t border-white/5 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                  <span className="text-xs text-slate-500">
+                    Style Agent is weighting your {profile.occasion} formality preference
+                  </span>
+                </div>
+              </GlassCard>
             )}
           </div>
 
           {/* ════ RIGHT COLUMN ════ */}
           <div className="flex flex-col gap-5">
 
-            {/* Weather card */}
-            <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
-              <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide mb-3">
+            {/* ── Weather card ── */}
+            <GlassCard className="p-5">
+              <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">
                 Lexington, VA · Today
               </h2>
               {weatherStatus === 'loading' && (
-                <div className="flex items-center gap-2 text-sm text-slate-400">
+                <div className="flex items-center gap-2 text-sm text-slate-500">
                   <Spinner /> Fetching weather...
                 </div>
               )}
               {weatherStatus === 'error' && (
-                <p className="text-sm text-slate-400">
-                  Weather unavailable — the AI will style without it.
+                <p className="text-sm text-slate-500">
+                  Weather unavailable — Context Agent will style without it.
                 </p>
               )}
               {weather && (
@@ -301,29 +359,29 @@ export default function App() {
                   <img
                     src={`https://openweathermap.org/img/wn/${weather.icon}@2x.png`}
                     alt={weather.description}
-                    className="w-16 h-16"
+                    className="w-16 h-16 opacity-90"
                   />
                   <div>
-                    <p className="text-4xl font-bold text-slate-800 leading-none">{weather.temp}°F</p>
-                    <p className="text-sm text-slate-500 capitalize mt-1">{weather.description}</p>
-                    <p className="text-xs text-slate-400 mt-0.5">Feels like {weather.feels_like}°F</p>
+                    <p className="text-4xl font-bold text-white leading-none">{weather.temp}°F</p>
+                    <p className="text-sm text-slate-400 capitalize mt-1">{weather.description}</p>
+                    <p className="text-xs text-slate-600 mt-0.5">Feels like {weather.feels_like}°F</p>
                   </div>
                 </div>
               )}
-            </section>
+            </GlassCard>
 
-            {/* AI Stylist card */}
-            <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
+            {/* ── AI Stylist card ── */}
+            <GlassCard className="p-5">
               <div className="mb-5">
-                <h2 className="text-sm font-semibold text-slate-500 uppercase tracking-wide">
+                <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">
                   AI Stylist
                 </h2>
-                <p className="text-xs text-slate-400 mt-0.5">
-                  Claude · Sonnet · {profile?.aesthetic ?? 'Personal'} aesthetic · Spring 2026 trends
+                <p className="text-xs text-slate-600 mt-0.5">
+                  4-Agent Pipeline · Claude Sonnet · Spring 2026 trends
                 </p>
               </div>
 
-              {/* ── Generate button — locked until wardrobe has items ── */}
+              {/* ── Generate button ── */}
               <div className="relative group">
                 <button
                   onClick={handleGenerate}
@@ -331,43 +389,42 @@ export default function App() {
                   className={`
                     w-full flex items-center justify-center gap-3 rounded-xl px-4 py-4 font-bold text-base transition-all
                     ${generateDisabled && !styling
-                      ? 'bg-slate-100 text-slate-400 cursor-not-allowed border-2 border-dashed border-slate-200'
+                      ? 'bg-white/5 text-slate-600 cursor-not-allowed border border-dashed border-white/10'
                       : styling
-                        ? 'bg-gradient-to-r from-indigo-500 to-purple-500 text-white cursor-not-allowed shadow-md'
-                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-lg hover:shadow-xl'
+                        ? 'bg-gradient-to-r from-indigo-600/80 to-purple-600/80 text-white cursor-not-allowed'
+                        : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-lg shadow-indigo-500/25 hover:shadow-indigo-500/40'
                     }
                   `}
                 >
-                  {styling ? (
-                    <>
-                      <Spinner />
-                      <span className="text-sm font-semibold">{stylingPhase}</span>
-                    </>
-                  ) : !hasItems ? (
+                  {!hasItems ? (
                     <>
                       <span className="text-lg">🔒</span>
                       <span className="text-sm">Scan your closet to unlock</span>
+                    </>
+                  ) : styling ? (
+                    <>
+                      <Spinner />
+                      <span className="text-sm font-semibold">Running agents...</span>
                     </>
                   ) : (
                     '✨ Generate My Outfit'
                   )}
                 </button>
 
-                {/* Tooltip on locked state */}
                 {!hasItems && (
-                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-800 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
+                  <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-slate-700 text-white text-xs px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none whitespace-nowrap">
                     Upload a closet video first
                   </div>
                 )}
               </div>
 
-              {/* Unlock nudge below button */}
+              {/* Nudge */}
               {!hasItems && (
-                <p className="text-center text-xs text-slate-400 mt-3">
+                <p className="text-center text-xs text-slate-600 mt-3">
                   Use{' '}
                   <button
                     onClick={() => setShowUpload(true)}
-                    className="text-indigo-500 hover:text-indigo-700 underline transition-colors"
+                    className="text-indigo-400 hover:text-indigo-300 underline transition-colors"
                   >
                     Scan Closet
                   </button>
@@ -375,46 +432,107 @@ export default function App() {
                 </p>
               )}
 
+              {/* ── Agent status log ── */}
+              {styling && (
+                <div className="mt-5 space-y-2">
+                  {AGENT_STEPS.map((step, i) => {
+                    const status =
+                      activeStep < i  ? 'pending'
+                      : activeStep === i ? 'running'
+                      : 'done'
+                    return (
+                      <div
+                        key={step.label}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg text-xs transition-all duration-500 ${
+                          status === 'running'
+                            ? 'bg-indigo-500/15 border border-indigo-500/30 text-indigo-300'
+                            : status === 'done'
+                              ? 'text-slate-500'
+                              : 'text-slate-700'
+                        }`}
+                      >
+                        <span className={status === 'pending' ? 'grayscale opacity-30' : ''}>
+                          {step.emoji}
+                        </span>
+                        <span className="font-medium">{step.label}</span>
+                        <span className="text-current opacity-70">{step.detail}</span>
+                        <span className="ml-auto">
+                          {status === 'running' && <Spinner className="w-3 h-3" />}
+                          {status === 'done'    && <span className="text-emerald-500">✓</span>}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+
               {/* Error */}
               {recommendError && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-100 rounded-xl text-sm text-red-600">
+                <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-sm text-red-400">
                   {recommendError}
                 </div>
               )}
 
-              {/* Result card */}
+              {/* ── Recommendation card ── */}
               {recommendation && (
-                <div className="mt-5 p-5 bg-gradient-to-br from-indigo-50 to-purple-50 border border-indigo-100 rounded-2xl">
+                <div className="mt-5 p-5 bg-gradient-to-br from-indigo-900/40 to-purple-900/30 border border-indigo-500/20 rounded-2xl">
                   <div className="flex items-center gap-2 mb-3">
                     <span className="text-lg">✨</span>
-                    <span className="text-xs font-bold text-indigo-600 uppercase tracking-widest">
+                    <span className="text-xs font-bold text-indigo-400 uppercase tracking-widest">
                       Look of the Day
                     </span>
                   </div>
-                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">
+                  <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-wrap">
                     {recommendation}
                   </p>
-                  <button
-                    onClick={handleGenerate}
-                    disabled={styling}
-                    className="mt-4 text-xs text-indigo-500 hover:text-indigo-700 underline transition-colors disabled:no-underline disabled:text-slate-400"
-                  >
-                    Generate another look →
-                  </button>
+
+                  {/* ── Feedback row ── */}
+                  <div className="mt-5 pt-4 border-t border-white/5 flex items-center justify-between gap-3">
+                    {feedback ? (
+                      <span className="text-xs text-slate-500">
+                        {feedback === 'up' ? '✓ Glad you love it!' : '✓ Noted — Style Agent will learn from this.'}
+                      </span>
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-600">How's this look?</span>
+                        <button
+                          onClick={() => handleFeedback(5)}
+                          className="text-lg hover:scale-110 transition-transform"
+                          title="Love it"
+                        >
+                          👍
+                        </button>
+                        <button
+                          onClick={() => handleFeedback(1)}
+                          className="text-lg hover:scale-110 transition-transform"
+                          title="Not for me"
+                        >
+                          👎
+                        </button>
+                      </div>
+                    )}
+                    <button
+                      onClick={handleGenerate}
+                      disabled={styling}
+                      className="text-xs text-indigo-400 hover:text-indigo-300 underline transition-colors disabled:no-underline disabled:text-slate-600"
+                    >
+                      Generate another →
+                    </button>
+                  </div>
                 </div>
               )}
 
               {/* Idle placeholder */}
               {hasItems && !recommendation && !recommendError && !styling && (
-                <div className="mt-6 text-center py-8 text-slate-300">
+                <div className="mt-6 text-center py-8 text-slate-700">
                   <span className="text-5xl block mb-3">✨</span>
                   <p className="text-sm">
                     {items.length} pieces ready.<br />
-                    Hit the button for today's look.
+                    Hit the button to run the pipeline.
                   </p>
                 </div>
               )}
-            </section>
+            </GlassCard>
           </div>
         </div>
       </main>

@@ -6,7 +6,8 @@ import db from './db/setup';
 import closetRouter from './routes/closet';
 import analyzeRouter from './routes/analyze';
 import profileRouter from './routes/profile';
-import { getStylingAdvice, type WeatherContext } from './services/aiService';
+import { generateOutfit } from './agents/outfitAgent';
+import type { WeatherContext } from './agents/types';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -63,7 +64,7 @@ app.get('/api/weather', async (_req, res) => {
   }
 });
 
-// POST /api/recommend
+// POST /api/recommend — orchestrates all four agents
 app.post('/api/recommend', async (req, res) => {
   if (!process.env.ANTHROPIC_API_KEY) {
     res.status(503).json({ error: 'Anthropic API key not configured' });
@@ -73,11 +74,42 @@ app.post('/api/recommend', async (req, res) => {
   const { weather } = req.body as { weather?: WeatherContext };
 
   try {
-    const advice = await getStylingAdvice(weather ?? null);
+    const advice = await generateOutfit('dev-user-001', weather ?? null);
     res.json({ advice });
   } catch (err) {
-    console.error('AI service error:', err);
+    console.error('Outfit Agent error:', err);
     res.status(500).json({ error: 'Failed to generate recommendation' });
+  }
+});
+
+// POST /api/feedback — record thumbs up/down on a generated outfit
+app.post('/api/feedback', (req, res) => {
+  const { outfit, rating, reason } = req.body as {
+    outfit?: string;
+    rating?: number;   // 1 = thumbs down, 5 = thumbs up
+    reason?: string;
+  };
+
+  if (!outfit || !rating) {
+    res.status(400).json({ error: 'outfit and rating are required' });
+    return;
+  }
+
+  try {
+    db.prepare(`
+      INSERT INTO user_feedback (id, user_id, outfit_json, rating, reason)
+      VALUES (@id, @user_id, @outfit_json, @rating, @reason)
+    `).run({
+      id:         require('crypto').randomUUID(),
+      user_id:    'dev-user-001',
+      outfit_json: outfit,
+      rating,
+      reason:     reason ?? null,
+    });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('Feedback save error:', err);
+    res.status(500).json({ error: 'Failed to save feedback' });
   }
 });
 
