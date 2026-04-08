@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import fs from 'fs';
 import path from 'path';
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data');
+const DATA_DIR = process.env.DATA_DIR ?? path.join(__dirname, '..', '..', 'data');
 const DB_PATH = path.join(DATA_DIR, 'ootd.db');
 
 if (!fs.existsSync(DATA_DIR)) {

@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import path from 'path';
 import db from './db/setup';
 import closetRouter from './routes/closet';
 import analyzeRouter from './routes/analyze';
@@ -79,6 +80,13 @@ app.post('/api/recommend', async (req, res) => {
     res.status(500).json({ error: 'Failed to generate recommendation' });
   }
 });
+
+// ── Static files (production only) ──────────────────────────────
+if (process.env.NODE_ENV === 'production') {
+  const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
+  app.use(express.static(clientDist));
+  app.get('*', (_req, res) => res.sendFile(path.join(clientDist, 'index.html')));
+}
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
